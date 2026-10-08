@@ -146,6 +146,7 @@ else:
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'https://frontend-quiz-lyart.vercel.app',
+        'https://knowme-quiz-harsh.vercel.app',
     ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -161,4 +162,5 @@ else:
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'https://frontend-quiz-lyart.vercel.app',
+        'https://knowme-quiz-harsh.vercel.app',
     ]
