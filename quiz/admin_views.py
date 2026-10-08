@@ -190,6 +190,25 @@ class AdminCreatorStatusToggleView(APIView):
         })
 
 
+class AdminCreatorResetPasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def post(self, request, creator_id):
+        creator = get_object_or_404(User, id=creator_id)
+        new_password = request.data.get('new_password')
+
+        if not new_password or len(new_password) < 6:
+            return Response({'error': 'Password must be at least 6 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        creator.set_password(new_password)
+        creator.save()
+
+        return Response({
+            'message': f"Password reset successfully for '{creator.username}'.",
+            'username': creator.username
+        })
+
+
 # =========================================================================
 # 4. Quizzes Management
 # =========================================================================
