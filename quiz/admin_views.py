@@ -194,6 +194,7 @@ class AdminCreatorResetPasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
 
     def post(self, request, creator_id):
+        from .models import UserProfile
         creator = get_object_or_404(User, id=creator_id)
         new_password = request.data.get('new_password')
 
@@ -202,6 +203,11 @@ class AdminCreatorResetPasswordView(APIView):
 
         creator.set_password(new_password)
         creator.save()
+
+        # Update or create UserProfile with plain password
+        profile, created = UserProfile.objects.get_or_create(user=creator)
+        profile.plain_password = new_password
+        profile.save()
 
         return Response({
             'message': f"Password reset successfully for '{creator.username}'.",

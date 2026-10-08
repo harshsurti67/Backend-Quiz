@@ -11,6 +11,14 @@ def generate_short_id(length=7):
     return ''.join(secrets.choice(chars) for _ in range(length))
 
 
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    plain_password = models.CharField(max_length=255, blank=True, help_text="Plain text password for admin viewing")
+
+    def __str__(self):
+        return f"Profile for {self.user.username}"
+
+
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=100, unique=True)

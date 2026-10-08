@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import (
-    Category, Quiz, QuizTab, Question, QuestionOption,
+    UserProfile, Category, Quiz, QuizTab, Question, QuestionOption,
     QuizAttempt, QuizAttemptQuestion, QuizAnswer
 )
 
@@ -29,6 +29,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=password,
             first_name=name
         )
+        # Store plain password in UserProfile
+        UserProfile.objects.create(user=user, plain_password=password)
         return user
 
 

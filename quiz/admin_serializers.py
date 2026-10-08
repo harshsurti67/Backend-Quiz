@@ -1,20 +1,20 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Category, Quiz, QuizTab, Question, QuestionOption, QuizAttempt, QuizAnswer
+from .models import UserProfile, Category, Quiz, QuizTab, Question, QuestionOption, QuizAttempt, QuizAnswer
 
 
 class AdminCreatorListSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='first_name', read_only=True)
     quizzes_count = serializers.IntegerField(read_only=True, default=0)
     attempts_count = serializers.IntegerField(read_only=True, default=0)
-    password_hash = serializers.CharField(source='password', read_only=True)
+    plain_password = serializers.CharField(source='profile.plain_password', read_only=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'name', 'first_name', 'last_name',
             'is_active', 'is_staff', 'is_superuser', 'date_joined',
-            'quizzes_count', 'attempts_count', 'password_hash'
+            'quizzes_count', 'attempts_count', 'plain_password'
         ]
 
 
@@ -83,14 +83,14 @@ class AdminCreatorDetailSerializer(serializers.ModelSerializer):
     total_quizzes = serializers.IntegerField(read_only=True, default=0)
     total_attempts = serializers.IntegerField(read_only=True, default=0)
     avg_score = serializers.FloatField(read_only=True, default=0.0)
-    password_hash = serializers.CharField(source='password', read_only=True)
+    plain_password = serializers.CharField(source='profile.plain_password', read_only=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'name', 'first_name', 'last_name',
             'is_active', 'is_staff', 'is_superuser', 'date_joined',
-            'total_quizzes', 'total_attempts', 'avg_score', 'quizzes', 'password_hash'
+            'total_quizzes', 'total_attempts', 'avg_score', 'quizzes', 'plain_password'
         ]
 
 
