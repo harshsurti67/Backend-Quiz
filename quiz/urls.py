@@ -1,4 +1,5 @@
 from django.urls import path
+from django.http import JsonResponse
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView,
@@ -36,6 +37,9 @@ from .admin_views import (
 )
 
 urlpatterns = [
+    # Health Check
+    path('health/', lambda request: JsonResponse({'status': 'ok'}), name='health'),
+
     # Auth
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
     path('auth/login/', LoginView.as_view(), name='auth-login'),
