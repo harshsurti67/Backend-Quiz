@@ -27,7 +27,8 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
     """
     Starts a new quiz attempt for a private person-to-person quiz.
     - Validates quiz is published.
-    - Retrieves the EXACT 10 creator questions (maintaining creator order 1..10).
+    - Selects 10 random questions, preferring unseen questions for this participant.
+    - Respects category distribution when categories are present.
     - Shuffles the 4 options per question and stores it permanently for this attempt.
     """
     try:
@@ -50,19 +51,107 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
         except QuizTab.DoesNotExist:
             tab = None
 
-    # Get the 10 questions for this personal quiz in creator order
-    questions_list = list(quiz.questions.filter(active=True).order_by('order').prefetch_related('options'))
+    # Get all active questions for this quiz
+    all_questions = list(quiz.questions.filter(active=True).prefetch_related('options'))
 
     # If personal quiz doesn't have custom questions yet, fallback to eligible global pool questions
-    if len(questions_list) < 10:
+    if len(all_questions) < 10:
         global_qs = Question.objects.filter(quiz__isnull=True, active=True).prefetch_related('options')
         if global_qs.count() >= 10:
-            questions_list = random.sample(list(global_qs), 10)
+            all_questions = random.sample(list(global_qs), 10)
         else:
             raise ValidationError({"error": "This quiz currently does not have enough questions configured."})
 
-    # Exactly 10 questions
-    selected_questions = questions_list[:10]
+    # Get questions this participant has already seen in previous attempts
+    participant_name_clean = participant_name.strip().lower()
+    previous_attempt_questions = QuizAttemptQuestion.objects.filter(
+        attempt__quiz=quiz,
+        attempt__participant_name__iexact=participant_name_clean
+    ).values_list('question_id', flat=True).distinct()
+
+    seen_question_ids = set(previous_attempt_questions)
+
+    # Group questions by category
+    from collections import defaultdict
+    questions_by_category = defaultdict(list)
+    for q in all_questions:
+        cat_id = q.category_id if q.category else None
+        questions_by_category[cat_id].append(q)
+
+    # Split into seen and unseen per category
+    unseen_by_category = defaultdict(list)
+    seen_by_category = defaultdict(list)
+    
+    for cat_id, questions in questions_by_category.items():
+        for q in questions:
+            if q.id in seen_question_ids:
+                seen_by_category[cat_id].append(q)
+            else:
+                unseen_by_category[cat_id].append(q)
+
+    # Calculate category distribution (proportional to available questions)
+    total_available = len(all_questions)
+    category_targets = {}
+    
+    if len(questions_by_category) > 1:
+        # Multiple categories - distribute proportionally
+        for cat_id, questions in questions_by_category.items():
+            proportion = len(questions) / total_available
+            target = max(1, round(proportion * 10))  # At least 1 per category
+            category_targets[cat_id] = target
+        
+        # Adjust to sum to exactly 10
+        current_total = sum(category_targets.values())
+        while current_total > 10:
+            # Reduce from largest category
+            largest_cat = max(category_targets, key=category_targets.get)
+            if category_targets[largest_cat] > 1:
+                category_targets[largest_cat] -= 1
+                current_total -= 1
+            else:
+                break
+        while current_total < 10:
+            # Add to category with most available
+            largest_cat = max(questions_by_category, key=lambda k: len(questions_by_category[k]))
+            category_targets[largest_cat] += 1
+            current_total += 1
+    else:
+        # Single category or no categories - just select 10 randomly
+        category_targets[list(questions_by_category.keys())[0]] = 10
+
+    # Select questions per category preferring unseen
+    selected_questions = []
+    for cat_id, target_count in category_targets.items():
+        unseen = unseen_by_category[cat_id]
+        seen = seen_by_category[cat_id]
+        
+        if len(unseen) >= target_count:
+            # Enough unseen in this category
+            selected = random.sample(unseen, target_count)
+        else:
+            # Use all unseen, fill from seen
+            selected = unseen.copy()
+            needed = target_count - len(selected)
+            if needed > 0 and seen:
+                additional = random.sample(seen, min(needed, len(seen)))
+                selected.extend(additional)
+        
+        selected_questions.extend(selected)
+
+    # If we didn't get exactly 10 (edge case), adjust
+    if len(selected_questions) < 10:
+        # Fill from remaining questions
+        selected_ids = {q.id for q in selected_questions}
+        remaining = [q for q in all_questions if q.id not in selected_ids]
+        needed = 10 - len(selected_questions)
+        if remaining:
+            selected_questions.extend(random.sample(remaining, min(needed, len(remaining))))
+    elif len(selected_questions) > 10:
+        # Trim randomly
+        selected_questions = random.sample(selected_questions, 10)
+
+    # Shuffle the selected questions to randomize order
+    random.shuffle(selected_questions)
 
     # Create the attempt record
     attempt = QuizAttempt.objects.create(
