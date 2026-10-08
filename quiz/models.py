@@ -46,7 +46,7 @@ class Quiz(models.Model):
     creator_name = models.CharField(max_length=100, help_text="Name of the person who owns the quiz, e.g. Prem")
     title = models.CharField(max_length=200, help_text="e.g. How Well Do You Know Prem?")
     description = models.TextField(blank=True, default="Take this quiz to test how well you really know me!")
-    avatar_id = models.CharField(max_length=50, default='cool_boy', help_text="Cartoon mascot avatar identifier")
+    avatar_id = models.CharField(max_length=50, default='cat', help_text="Animal character avatar identifier (cat, dog, panda, rabbit, fox, bear, lion, koala)")
     public_id = models.CharField(max_length=16, unique=True, db_index=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
