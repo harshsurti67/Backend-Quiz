@@ -32,35 +32,41 @@ class AdminLoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        username = request.data.get('username') or request.data.get('email')
-        password = request.data.get('password')
+        try:
+            username = request.data.get('username') or request.data.get('email')
+            password = request.data.get('password')
 
-        if not username or not password:
-            return Response({'error': 'Username/email and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not username or not password:
+                return Response({'error': 'Username/email and password are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = authenticate(username=username, password=password)
-        if not user and '@' in username:
-            try:
-                user_obj = User.objects.get(email=username)
-                user = authenticate(username=user_obj.username, password=password)
-            except User.DoesNotExist:
-                user = None
+            user = authenticate(username=username, password=password)
+            if not user and '@' in username:
+                try:
+                    user_obj = User.objects.get(email=username)
+                    user = authenticate(username=user_obj.username, password=password)
+                except User.DoesNotExist:
+                    user = None
 
-        if not user:
-            return Response({'error': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
+            if not user:
+                return Response({'error': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Enforce Backend Admin / Staff Permission
-        if not (user.is_staff or user.is_superuser):
+            # Enforce Backend Admin / Staff Permission
+            if not (user.is_staff or user.is_superuser):
+                return Response({
+                    'error': 'Access Denied. You do not have administrator privileges.'
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            refresh = RefreshToken.for_user(user)
             return Response({
-                'error': 'Access Denied. You do not have administrator privileges.'
-            }, status=status.HTTP_403_FORBIDDEN)
-
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'user': UserProfileSerializer(user).data,
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-        }, status=status.HTTP_200_OK)
+                'user': UserProfileSerializer(user).data,
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Admin login error: {str(e)}", exc_info=True)
+            return Response({'error': 'An error occurred during admin login. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # =========================================================================
