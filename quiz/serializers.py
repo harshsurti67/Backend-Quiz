@@ -3,7 +3,8 @@ from django.contrib.auth.models import User
 from django.db import models
 from .models import (
     UserProfile, Category, Quiz, QuizTab, Question, QuestionOption,
-    QuizAttempt, QuizAttemptQuestion, QuizAnswer, Follow
+    QuizAttempt, QuizAttemptQuestion, QuizAnswer, Follow,
+    FriendRequest, Conversation, Message
 )
 
 
@@ -319,15 +320,24 @@ class PublicUserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'name', 'followers_count', 'following_count', 'is_following']
 
     def get_followers_count(self, obj):
-        return obj.followers.count()
+        try:
+            return obj.followers.count()
+        except Exception:
+            return 0
 
     def get_following_count(self, obj):
-        return obj.following.count()
+        try:
+            return obj.following.count()
+        except Exception:
+            return 0
 
     def get_is_following(self, obj):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return Follow.objects.filter(follower=request.user, following=obj).exists()
+            try:
+                return Follow.objects.filter(follower=request.user, following=obj).exists()
+            except Exception:
+                return False
         return False
 
 
@@ -338,3 +348,86 @@ class FollowSerializer(serializers.ModelSerializer):
     class Meta:
         model = Follow
         fields = ['id', 'follower', 'following', 'created_at']
+
+
+# =========================================================================
+# Friend Request Serializers
+# =========================================================================
+class FriendRequestSerializer(serializers.ModelSerializer):
+    sender = PublicUserSerializer(read_only=True)
+    receiver = PublicUserSerializer(read_only=True)
+    is_my_request = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FriendRequest
+        fields = ['id', 'sender', 'receiver', 'status', 'created_at', 'updated_at', 'is_my_request']
+
+    def get_is_my_request(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.sender == request.user
+        return False
+
+
+class FriendRequestActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=['accept', 'decline', 'cancel'])
+
+
+# =========================================================================
+# Messaging Serializers
+# =========================================================================
+class MessageSerializer(serializers.ModelSerializer):
+    sender = PublicUserSerializer(read_only=True)
+    is_me = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = ['id', 'sender', 'text', 'read_at', 'created_at', 'is_me']
+
+    def get_is_me(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.sender == request.user
+        return False
+
+
+class ConversationSerializer(serializers.ModelSerializer):
+    other_participant = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Conversation
+        fields = ['id', 'other_participant', 'last_message', 'unread_count', 'updated_at']
+
+    def get_other_participant(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            other = obj.get_other_participant(request.user)
+            if other:
+                return PublicUserSerializer(other).data
+        return None
+
+    def get_last_message(self, obj):
+        last_msg = obj.messages.last()
+        if last_msg:
+            return {
+                'text': last_msg.text,
+                'created_at': last_msg.created_at,
+                'sender_id': last_msg.sender_id
+            }
+        return None
+
+    def get_unread_count(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.messages.filter(sender__ne=request.user, read_at__isnull=True).count()
+        return 0
+
+
+class CreateMessageSerializer(serializers.Serializer):
+    text = serializers.CharField(max_length=5000)
+
+
+class ConversationCreateSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()

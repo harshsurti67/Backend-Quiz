@@ -22,6 +22,15 @@ from .views import (
     UserFollowersView,
     UserFollowingView,
     MyFollowingView,
+    SendFriendRequestView,
+    RespondFriendRequestView,
+    CancelFriendRequestView,
+    MyFriendRequestsView,
+    ConversationListView,
+    ConversationDetailView,
+    CreateConversationView,
+    SendMessageView,
+    UnreadCountView,
 )
 from .admin_views import (
     AdminLoginView,
@@ -72,6 +81,19 @@ urlpatterns = [
     path('users/<int:user_id>/followers/', UserFollowersView.as_view(), name='user-followers'),
     path('users/<int:user_id>/following/', UserFollowingView.as_view(), name='user-following'),
     path('users/me/following/', MyFollowingView.as_view(), name='my-following'),
+
+    # Friend Requests
+    path('friend-requests/send/<int:user_id>/', SendFriendRequestView.as_view(), name='send-friend-request'),
+    path('friend-requests/<int:request_id>/respond/', RespondFriendRequestView.as_view(), name='respond-friend-request'),
+    path('friend-requests/<int:request_id>/', CancelFriendRequestView.as_view(), name='cancel-friend-request'),
+    path('friend-requests/me/', MyFriendRequestsView.as_view(), name='my-friend-requests'),
+
+    # Messaging
+    path('conversations/', ConversationListView.as_view(), name='conversations'),
+    path('conversations/create/', CreateConversationView.as_view(), name='create-conversation'),
+    path('conversations/<int:conversation_id>/', ConversationDetailView.as_view(), name='conversation-detail'),
+    path('conversations/<int:conversation_id>/messages/', SendMessageView.as_view(), name='send-message'),
+    path('messages/unread-count/', UnreadCountView.as_view(), name='unread-count'),
 
     # Quiz Attempts (Participant Session)
     path('attempts/<uuid:attempt_id>/', QuizAttemptDetailView.as_view(), name='attempt-detail'),

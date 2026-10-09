@@ -2,19 +2,21 @@ from rest_framework import status, permissions, viewsets, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.generics import get_object_or_404, ListAPIView
-from django.db import transaction
+from django.db import transaction, models
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Quiz, QuizTab, Category, Question, QuestionOption, QuizAttempt, QuizAnswer, Follow
+from .models import Quiz, QuizTab, Category, Question, QuestionOption, QuizAttempt, QuizAnswer, Follow, FriendRequest, Conversation, Message
 from .serializers import (
     RegisterSerializer, UserProfileSerializer,
     CategorySerializer, QuizTabSerializer,
     PublicQuizSerializer, QuizAttemptStateSerializer,
     StartAttemptSerializer, AnswerSubmissionSerializer,
     QuizResultSerializer, QuizDraftCreateUpdateSerializer,
-    CreatorQuizDetailSerializer, PublicUserSerializer, FollowSerializer
+    CreatorQuizDetailSerializer, PublicUserSerializer, FollowSerializer,
+    FriendRequestSerializer, FriendRequestActionSerializer,
+    MessageSerializer, ConversationSerializer, CreateMessageSerializer, ConversationCreateSerializer
 )
 from .services import start_quiz_attempt, record_quiz_answer, submit_quiz_attempt
 
@@ -380,6 +382,7 @@ class UserSearchView(ListAPIView):
     """GET /api/users/search/?q=<query> - Search for users by username or name."""
     serializer_class = PublicUserSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None  # Disable pagination since we limit manually
 
     def get_queryset(self):
         query = self.request.query_params.get('q', '').strip()
@@ -477,3 +480,199 @@ class MyFollowingView(ListAPIView):
     def get_queryset(self):
         following_ids = Follow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
         return User.objects.filter(id__in=following_ids)
+
+
+# =========================================================================
+# Friend Request Views
+# =========================================================================
+class SendFriendRequestView(APIView):
+    """POST /api/friend-requests/send/<user_id>/ - Send a friend request."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        if user_id == request.user.id:
+            return Response({'error': 'You cannot send a friend request to yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if request already exists
+        if FriendRequest.objects.filter(sender=request.user, receiver=target_user, status='pending').exists():
+            return Response({'error': 'Friend request already sent.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if they are already friends (using Follow as friendship)
+        if Follow.objects.filter(follower=request.user, following=target_user).exists():
+            return Response({'error': 'You are already friends.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create friend request
+        FriendRequest.objects.create(sender=request.user, receiver=target_user)
+
+        return Response({'message': 'Friend request sent.'}, status=status.HTTP_201_CREATED)
+
+
+class RespondFriendRequestView(APIView):
+    """POST /api/friend-requests/<request_id>/respond/ - Accept or decline a friend request."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, request_id):
+        try:
+            friend_request = FriendRequest.objects.get(id=request_id, receiver=request.user, status='pending')
+        except FriendRequest.DoesNotExist:
+            return Response({'error': 'Friend request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = FriendRequestActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action = serializer.validated_data['action']
+
+        if action == 'accept':
+            friend_request.status = 'accepted'
+            friend_request.save()
+            # Create mutual follow relationship
+            Follow.objects.get_or_create(follower=request.user, following=friend_request.sender)
+            Follow.objects.get_or_create(follower=friend_request.sender, following=request.user)
+            return Response({'message': 'Friend request accepted.'}, status=status.HTTP_200_OK)
+        elif action == 'decline':
+            friend_request.status = 'declined'
+            friend_request.save()
+            return Response({'message': 'Friend request declined.'}, status=status.HTTP_200_OK)
+
+        return Response({'error': 'Invalid action.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CancelFriendRequestView(APIView):
+    """DELETE /api/friend-requests/<request_id>/ - Cancel a sent friend request."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, request_id):
+        try:
+            friend_request = FriendRequest.objects.get(id=request_id, sender=request.user, status='pending')
+        except FriendRequest.DoesNotExist:
+            return Response({'error': 'Friend request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        friend_request.status = 'cancelled'
+        friend_request.save()
+        return Response({'message': 'Friend request cancelled.'}, status=status.HTTP_200_OK)
+
+
+class MyFriendRequestsView(ListAPIView):
+    """GET /api/friend-requests/me/ - Get current user's friend requests."""
+    serializer_class = FriendRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Get both sent and received requests
+        sent = FriendRequest.objects.filter(sender=self.request.user, status='pending')
+        received = FriendRequest.objects.filter(receiver=self.request.user, status='pending')
+        return (sent | received).order_by('-created_at')
+
+
+# =========================================================================
+# Messaging Views
+# =========================================================================
+class ConversationListView(ListAPIView):
+    """GET /api/conversations/ - Get user's conversations."""
+    serializer_class = ConversationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        return self.request.user.conversations.all()
+
+
+class ConversationDetailView(APIView):
+    """GET /api/conversations/<id>/ - Get conversation details and messages."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, conversation_id):
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, participants=request.user)
+        except Conversation.DoesNotExist:
+            return Response({'error': 'Conversation not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Mark messages as read
+        conversation.messages.filter(sender__ne=request.user, read_at__isnull=True).update(read_at=models.Now())
+
+        messages = conversation.messages.all()
+        serializer = MessageSerializer(messages, many=True, context={'request': request})
+
+        return Response({
+            'conversation': ConversationSerializer(conversation, context={'request': request}).data,
+            'messages': serializer.data
+        })
+
+
+class CreateConversationView(APIView):
+    """POST /api/conversations/create/ - Create or get conversation with a friend."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ConversationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user_id = serializer.validated_data['user_id']
+
+        if user_id == request.user.id:
+            return Response({'error': 'You cannot create a conversation with yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if they are friends
+        if not Follow.objects.filter(follower=request.user, following=target_user).exists():
+            return Response({'error': 'You can only message friends.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if conversation already exists
+        existing_conversation = Conversation.objects.filter(participants=request.user).filter(participants=target_user).first()
+        if existing_conversation:
+            return Response({
+                'conversation': ConversationSerializer(existing_conversation, context={'request': request}).data
+            }, status=status.HTTP_200_OK)
+
+        # Create new conversation
+        conversation = Conversation.objects.create()
+        conversation.participants.add(request.user, target_user)
+
+        return Response({
+            'conversation': ConversationSerializer(conversation, context={'request': request}).data
+        }, status=status.HTTP_201_CREATED)
+
+
+class SendMessageView(APIView):
+    """POST /api/conversations/<id>/messages/ - Send a message."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, conversation_id):
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, participants=request.user)
+        except Conversation.DoesNotExist:
+            return Response({'error': 'Conversation not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CreateMessageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        message = Message.objects.create(
+            conversation=conversation,
+            sender=request.user,
+            text=serializer.validated_data['text']
+        )
+
+        # Update conversation timestamp
+        conversation.updated_at = models.Now()
+        conversation.save()
+
+        return Response(MessageSerializer(message, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+
+class UnreadCountView(APIView):
+    """GET /api/messages/unread-count/ - Get unread message count."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        total_unread = 0
+        for conversation in request.user.conversations.all():
+            total_unread += conversation.messages.filter(sender__ne=request.user, read_at__isnull=True).count()
+
+        return Response({'unread_count': total_unread})
