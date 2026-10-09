@@ -235,8 +235,8 @@ class QuizDraftCreateUpdateSerializer(serializers.Serializer):
 
     def validate_questions(self, questions):
         publish = self.initial_data.get('publish', False)
-        if publish and len(questions) != 10:
-            raise serializers.ValidationError(f"Cannot publish quiz. A published quiz must have EXACTLY 10 questions (currently {len(questions)}).")
+        if publish and len(questions) not in [5, 10]:
+            raise serializers.ValidationError(f"Cannot publish quiz. A published quiz must have exactly 5 or 10 questions (currently {len(questions)}).")
         return questions
 
 

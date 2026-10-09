@@ -66,11 +66,12 @@ class Quiz(models.Model):
         super().save(*args, **kwargs)
 
     def is_valid_for_publishing(self):
-        """Validate that quiz has exactly 10 questions, each with 4 options and 1 correct answer."""
+        """Validate that quiz has 5 or 10 questions, each with 4 options and 1 correct answer."""
         questions = self.questions.filter(active=True)
-        if questions.count() != 10:
-            return False, f"Quiz has {questions.count()} questions. Exactly 10 questions are required to publish."
-        
+        question_count = questions.count()
+        if question_count not in [5, 10]:
+            return False, f"Quiz has {question_count} questions. Quiz must have exactly 5 or 10 questions to publish."
+
         for idx, q in enumerate(questions, start=1):
             if not q.text.strip():
                 return False, f"Question {idx} text cannot be empty."

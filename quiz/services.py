@@ -53,12 +53,13 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
 
     # Get all active questions for this quiz
     all_questions = list(quiz.questions.filter(active=True).prefetch_related('options'))
+    question_count = len(all_questions)
 
     # If personal quiz doesn't have custom questions yet, fallback to eligible global pool questions
-    if len(all_questions) < 10:
+    if question_count < 5:
         global_qs = Question.objects.filter(quiz__isnull=True, active=True).prefetch_related('options')
-        if global_qs.count() >= 10:
-            all_questions = random.sample(list(global_qs), 10)
+        if global_qs.count() >= 5:
+            all_questions = random.sample(list(global_qs), 5)
         else:
             raise ValidationError({"error": "This quiz currently does not have enough questions configured."})
 
@@ -91,18 +92,19 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
 
     # Calculate category distribution (proportional to available questions)
     total_available = len(all_questions)
+    target_question_count = question_count if question_count >= 5 else 5
     category_targets = {}
-    
+
     if len(questions_by_category) > 1:
         # Multiple categories - distribute proportionally
         for cat_id, questions in questions_by_category.items():
             proportion = len(questions) / total_available
-            target = max(1, round(proportion * 10))  # At least 1 per category
+            target = max(1, round(proportion * target_question_count))  # At least 1 per category
             category_targets[cat_id] = target
-        
-        # Adjust to sum to exactly 10
+
+        # Adjust to sum to exactly target_question_count
         current_total = sum(category_targets.values())
-        while current_total > 10:
+        while current_total > target_question_count:
             # Reduce from largest category
             largest_cat = max(category_targets, key=category_targets.get)
             if category_targets[largest_cat] > 1:
@@ -110,14 +112,14 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
                 current_total -= 1
             else:
                 break
-        while current_total < 10:
+        while current_total < target_question_count:
             # Add to category with most available
             largest_cat = max(questions_by_category, key=lambda k: len(questions_by_category[k]))
             category_targets[largest_cat] += 1
             current_total += 1
     else:
-        # Single category or no categories - just select 10 randomly
-        category_targets[list(questions_by_category.keys())[0]] = 10
+        # Single category or no categories - just select target_question_count randomly
+        category_targets[list(questions_by_category.keys())[0]] = target_question_count
 
     # Select questions per category preferring unseen
     selected_questions = []
@@ -138,17 +140,17 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
         
         selected_questions.extend(selected)
 
-    # If we didn't get exactly 10 (edge case), adjust
-    if len(selected_questions) < 10:
+    # If we didn't get exactly target_question_count (edge case), adjust
+    if len(selected_questions) < target_question_count:
         # Fill from remaining questions
         selected_ids = {q.id for q in selected_questions}
         remaining = [q for q in all_questions if q.id not in selected_ids]
-        needed = 10 - len(selected_questions)
+        needed = target_question_count - len(selected_questions)
         if remaining:
             selected_questions.extend(random.sample(remaining, min(needed, len(remaining))))
-    elif len(selected_questions) > 10:
+    elif len(selected_questions) > target_question_count:
         # Trim randomly
-        selected_questions = random.sample(selected_questions, 10)
+        selected_questions = random.sample(selected_questions, target_question_count)
 
     # Shuffle the selected questions to randomize order
     random.shuffle(selected_questions)
@@ -159,12 +161,12 @@ def start_quiz_attempt(quiz_public_id, participant_name, tab_id=None):
         tab=tab,
         participant_name=participant_name.strip(),
         status='in_progress',
-        total_questions=10,
+        total_questions=target_question_count,
         score=0,
         percentage=0.0
     )
 
-    # Store the 10 selected questions and randomize option order per question
+    # Store the selected questions and randomize option order per question
     attempt_questions = []
     for order_idx, question in enumerate(selected_questions, start=1):
         option_ids = list(question.options.values_list('id', flat=True))
