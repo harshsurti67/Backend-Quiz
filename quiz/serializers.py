@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.db import models
 from .models import (
     UserProfile, Category, Quiz, QuizTab, Question, QuestionOption,
-    QuizAttempt, QuizAttemptQuestion, QuizAnswer
+    QuizAttempt, QuizAttemptQuestion, QuizAnswer, Follow
 )
 
 
@@ -301,5 +302,39 @@ class CreatorQuizDetailSerializer(serializers.ModelSerializer):
         completed = obj.attempts.filter(status='completed')
         if not completed.exists():
             return 0
-        from django.db.models import Max
-        return completed.aggregate(Max('score'))['score__max'] or 0
+        return completed.aggregate(max_score=models.Max('score'))['max_score'] or 0
+
+
+# =========================================================================
+# Follow System Serializers
+# =========================================================================
+class PublicUserSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='first_name', read_only=True)
+    followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'name', 'followers_count', 'following_count', 'is_following']
+
+    def get_followers_count(self, obj):
+        return obj.followers.count()
+
+    def get_following_count(self, obj):
+        return obj.following.count()
+
+    def get_is_following(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return Follow.objects.filter(follower=request.user, following=obj).exists()
+        return False
+
+
+class FollowSerializer(serializers.ModelSerializer):
+    follower = PublicUserSerializer(read_only=True)
+    following = PublicUserSerializer(read_only=True)
+
+    class Meta:
+        model = Follow
+        fields = ['id', 'follower', 'following', 'created_at']

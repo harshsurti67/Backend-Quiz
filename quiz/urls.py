@@ -17,6 +17,11 @@ from .views import (
     QuizPublishView,
     MyQuizzesListView,
     QuizStatsView,
+    UserSearchView,
+    FollowUserView,
+    UserFollowersView,
+    UserFollowingView,
+    MyFollowingView,
 )
 from .admin_views import (
     AdminLoginView,
@@ -60,6 +65,13 @@ urlpatterns = [
 
     # Categories
     path('categories/', CategoryListView.as_view(), name='categories-list'),
+
+    # Follow System
+    path('users/search/', UserSearchView.as_view(), name='user-search'),
+    path('users/<int:user_id>/follow/', FollowUserView.as_view(), name='user-follow'),
+    path('users/<int:user_id>/followers/', UserFollowersView.as_view(), name='user-followers'),
+    path('users/<int:user_id>/following/', UserFollowingView.as_view(), name='user-following'),
+    path('users/me/following/', MyFollowingView.as_view(), name='my-following'),
 
     # Quiz Attempts (Participant Session)
     path('attempts/<uuid:attempt_id>/', QuizAttemptDetailView.as_view(), name='attempt-detail'),

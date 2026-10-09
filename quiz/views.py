@@ -1,20 +1,20 @@
-from rest_framework import status, permissions
+from rest_framework import status, permissions, viewsets, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.generics import get_object_or_404
+from rest_framework.generics import get_object_or_404, ListAPIView
 from django.db import transaction
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Quiz, QuizTab, Category, Question, QuestionOption, QuizAttempt, QuizAnswer
+from .models import Quiz, QuizTab, Category, Question, QuestionOption, QuizAttempt, QuizAnswer, Follow
 from .serializers import (
     RegisterSerializer, UserProfileSerializer,
     CategorySerializer, QuizTabSerializer,
     PublicQuizSerializer, QuizAttemptStateSerializer,
     StartAttemptSerializer, AnswerSubmissionSerializer,
     QuizResultSerializer, QuizDraftCreateUpdateSerializer,
-    CreatorQuizDetailSerializer
+    CreatorQuizDetailSerializer, PublicUserSerializer, FollowSerializer
 )
 from .services import start_quiz_attempt, record_quiz_answer, submit_quiz_attempt
 
@@ -371,3 +371,109 @@ class QuizStatsView(APIView):
                 for a in recent_attempts
             ]
         })
+
+
+# =========================================================================
+# Follow System Views
+# =========================================================================
+class UserSearchView(ListAPIView):
+    """GET /api/users/search/?q=<query> - Search for users by username or name."""
+    serializer_class = PublicUserSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        query = self.request.query_params.get('q', '').strip()
+        if not query:
+            return User.objects.none()
+
+        # Exclude current user from results
+        queryset = User.objects.exclude(id=self.request.user.id)
+
+        # Search by username or first_name
+        queryset = queryset.filter(
+            models.Q(username__icontains=query) |
+            models.Q(first_name__icontains=query)
+        )
+
+        return queryset[:20]  # Limit to 20 results
+
+
+class FollowUserView(APIView):
+    """POST/DELETE /api/users/<user_id>/follow/ - Follow or Unfollow a user."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        if user_id == request.user.id:
+            return Response({'error': 'You cannot follow yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if already following
+        if Follow.objects.filter(follower=request.user, following=target_user).exists():
+            return Response({'error': 'You are already following this user.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create follow relationship
+        Follow.objects.create(follower=request.user, following=target_user)
+
+        return Response({'message': 'Successfully followed user.'}, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, user_id):
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if following
+        follow = Follow.objects.filter(follower=request.user, following=target_user).first()
+        if not follow:
+            return Response({'error': 'You are not following this user.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        follow.delete()
+        return Response({'message': 'Successfully unfollowed user.'}, status=status.HTTP_200_OK)
+
+
+class UserFollowersView(ListAPIView):
+    """GET /api/users/<user_id>/followers/ - Get list of followers."""
+    serializer_class = PublicUserSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user_id = self.kwargs['user_id']
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return User.objects.none()
+
+        # Get users who follow this user
+        follower_ids = Follow.objects.filter(following=user).values_list('follower_id', flat=True)
+        return User.objects.filter(id__in=follower_ids)
+
+
+class UserFollowingView(ListAPIView):
+    """GET /api/users/<user_id>/following/ - Get list of users this user follows."""
+    serializer_class = PublicUserSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user_id = self.kwargs['user_id']
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return User.objects.none()
+
+        # Get users this user follows
+        following_ids = Follow.objects.filter(follower=user).values_list('following_id', flat=True)
+        return User.objects.filter(id__in=following_ids)
+
+
+class MyFollowingView(ListAPIView):
+    """GET /api/users/me/following/ - Get current user's following list."""
+    serializer_class = PublicUserSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        following_ids = Follow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
+        return User.objects.filter(id__in=following_ids)
